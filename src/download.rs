@@ -69,7 +69,7 @@ impl Default for Download {
             url: "".to_string(),
             filename: PathBuf::from("".to_string()),
             memory: 256,
-            threads: num_cpus::get(),
+            threads: 4,
             network: network::Network {
                 ..Default::default()
             },
@@ -121,7 +121,7 @@ impl Download {
         Ok(())
     }
 
-    fn assemble(file_path:PathBuf,ranges:Vec<(String,usize,usize)>){
+    fn assemble(file_path: PathBuf, ranges: Vec<(String, usize, usize)>) {
         let origin_file_path_ref = file_path.clone();
         let origin_file_handle = OpenOptions::new()
             .write(true)
@@ -129,18 +129,14 @@ impl Download {
             .open(origin_file_path_ref)
             .unwrap();
         let origin_file_arc = Arc::new(origin_file_handle);
-        for (cache_file_name,range_start,range_end) in ranges{
+        for (cache_file_name, range_start, range_end) in ranges {
             let mut origin_file_ref = origin_file_arc.clone();
             origin_file_ref
                 .seek(SeekFrom::Start(range_start as u64))
                 .unwrap();
             let mut cache_file_handle = File::open(&cache_file_name).unwrap();
             let mut writer = BufWriter::new(origin_file_ref);
-            copy_n_byte(
-                &mut cache_file_handle,
-                &mut writer,
-                range_end - range_start,
-            );
+            copy_n_byte(&mut cache_file_handle, &mut writer, range_end - range_start);
             let _ = writer.flush();
         }
     }
@@ -175,20 +171,20 @@ impl Download {
 
             let thread_number = thread + 1;
             let range_start_option = if let Some(process) = map.get(&thread_number) {
-                if process.cached_size as usize>=range_end-range_start{
+                if process.cached_size as usize >= range_end - range_start {
                     None
-                }else{
+                } else {
                     Some(range_start + process.cached_size as usize)
                 }
             } else {
                 Some(range_start)
             };
             progress.add(range_to_process, thread_number);
-            if let Some(range_start_to_query) = range_start_option{
-                let range: String = format!("bytes={}-{}", range_start_to_query, range_end-1);
+            if let Some(range_start_to_query) = range_start_option {
+                let range: String = format!("bytes={}-{}", range_start_to_query, range_end - 1);
                 // println!("   Thread: {}, range: {}, chunks: {}, chunk_remainder: {}", thread_number, range, buffer_chunks, chunk_remainder);
                 ranges.push((Some(range), range_start, thread_number, range_end));
-            }else{
+            } else {
                 ranges.push((None, range_start, thread_number, range_end));
                 progress.finish(thread_number);
             }
@@ -256,7 +252,11 @@ impl Download {
         initial_status
     }
 
-    fn spawn_threads(self, rt: &Runtime, content_length: usize) -> Vec<JoinHandle<Option<(String,usize,usize)>>> {
+    fn spawn_threads(
+        self,
+        rt: &Runtime,
+        content_length: usize,
+    ) -> Vec<JoinHandle<Option<(String, usize, usize)>>> {
         let mut children = vec![];
 
         let network_arc = Arc::new(self.network);
@@ -292,7 +292,6 @@ impl Download {
             let map_ref = map_arc.clone();
 
             children.push(rt.spawn(async move {
-
                 let cache_file_name = format!(
                     "{}{}{}.{}",
                     cache_path_ref,
@@ -300,9 +299,8 @@ impl Download {
                     file_name_ref,
                     thread_number
                 );
-                if let Some(range)=range_opt{
+                if let Some(range) = range_opt {
                     if !progress_ref.is_finished(thread_number) {
-
                         let mut cache_file_handle = OpenOptions::new()
                             .write(true)
                             .create(true)
@@ -327,7 +325,7 @@ impl Download {
                         progress_ref.finish(thread_number);
                     }
                 }
-                return Some((cache_file_name,range_start,range_end))
+                return Some((cache_file_name, range_start, range_end));
             }));
         }
 
