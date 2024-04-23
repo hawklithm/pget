@@ -107,8 +107,9 @@ impl Download {
             Some(content_length) => {
                 let target_filename = self.filename.clone();
                 let children = Download::spawn_threads(self, &rt,content_length as usize);
-                rt.block_on(join_all(children));
-                let mut target_file_handle = OpenOptions::new()
+                let request_result = rt.block_on(join_all(children)).into_iter().filter_map(|x|x.ok()).filter_map(|x|x).collect::<Vec<_>>();
+                Download::assemble(target_filename.clone(), request_result);
+                let target_file_handle = OpenOptions::new()
                     .write(true)
                     .create(true)
                     .open(target_filename)
@@ -120,6 +121,30 @@ impl Download {
         Ok(())
     }
 
+    fn assemble(file_path:PathBuf,ranges:Vec<(String,usize,usize)>){
+        let origin_file_path_ref = file_path.clone();
+        let origin_file_handle = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(origin_file_path_ref)
+            .unwrap();
+        let origin_file_arc = Arc::new(origin_file_handle);
+        for (cache_file_name,range_start,range_end) in ranges{
+            let mut origin_file_ref = origin_file_arc.clone();
+            origin_file_ref
+                .seek(SeekFrom::Start(range_start as u64))
+                .unwrap();
+            let mut cache_file_handle = File::open(&cache_file_name).unwrap();
+            let mut writer = BufWriter::new(origin_file_ref);
+            copy_n_byte(
+                &mut cache_file_handle,
+                &mut writer,
+                range_end - range_start,
+            );
+            let _ = writer.flush();
+        }
+    }
+
     fn calculate_ranges(
         threads: usize,
         content_length: usize,
@@ -127,7 +152,7 @@ impl Download {
         cache_dir: PathBuf,
     ) -> (
         progress::Progress,
-        Vec<(String, usize, usize, usize)>,
+        Vec<(Option<String>, usize, usize, usize)>,
         HashMap<usize, DownloadProcess>,
     ) {
         let mut range_start = 0;
@@ -146,27 +171,36 @@ impl Download {
                 range_end = content_length
             }
 
-            let thread_number = thread + 1;
-            let range_start_to_query = if let Some(process) = map.get(&thread) {
-                range_start + process.cached_size as usize
-            } else {
-                range_start
-            };
-            let range: String = format!("bytes={}-{}", range_start_to_query, range_end);
             let range_to_process = range_end - range_start;
 
-            // println!("   Thread: {}, range: {}, chunks: {}, chunk_remainder: {}", thread_number, range, buffer_chunks, chunk_remainder);
-            ranges.push((range, range_start, thread_number, range_end));
+            let thread_number = thread + 1;
+            let range_start_option = if let Some(process) = map.get(&thread_number) {
+                if process.cached_size as usize>=range_end-range_start{
+                    None
+                }else{
+                    Some(range_start + process.cached_size as usize)
+                }
+            } else {
+                Some(range_start)
+            };
             progress.add(range_to_process, thread_number);
-            if let Some(process) = map.get(&thread) {
-                if process.finished {
-                    progress.finish(thread);
+            if let Some(range_start_to_query) = range_start_option{
+                let range: String = format!("bytes={}-{}", range_start_to_query, range_end-1);
+                // println!("   Thread: {}, range: {}, chunks: {}, chunk_remainder: {}", thread_number, range, buffer_chunks, chunk_remainder);
+                ranges.push((Some(range), range_start, thread_number, range_end));
+            }else{
+                ranges.push((None, range_start, thread_number, range_end));
+                progress.finish(thread_number);
+            }
+            if let Some(process) = map.get(&thread_number) {
+                if process.finished || progress.is_finished(thread_number) {
+                    progress.finish(thread_number);
                 } else {
-                    progress.set_position(process.cached_size, thread);
+                    progress.set_position(process.cached_size, thread_number);
                 }
             };
 
-            range_start = range_start + chunk_size + 1;
+            range_start = range_start + chunk_size;
         }
         return (progress, ranges, map);
     }
@@ -222,7 +256,7 @@ impl Download {
         initial_status
     }
 
-    fn spawn_threads(self, rt: &Runtime, content_length: usize) -> Vec<JoinHandle<()>> {
+    fn spawn_threads(self, rt: &Runtime, content_length: usize) -> Vec<JoinHandle<Option<(String,usize,usize)>>> {
         let mut children = vec![];
 
         let network_arc = Arc::new(self.network);
@@ -249,16 +283,16 @@ impl Download {
 
         let map_arc = Arc::new(map);
 
-        for (range, range_start, thread_number, range_end) in ranges {
+        for (range_opt, range_start, thread_number, range_end) in ranges.clone() {
             let progress_ref = progress_arc.clone();
             let network_ref = network_arc.clone();
             let url_ref = self.url.clone();
             let file_name_ref = file_name.clone();
-            let origin_file_path_ref = file_path.clone();
             let cache_path_ref = cache_dir.to_str().unwrap().to_string();
             let map_ref = map_arc.clone();
 
             children.push(rt.spawn(async move {
+
                 let cache_file_name = format!(
                     "{}{}{}.{}",
                     cache_path_ref,
@@ -266,47 +300,34 @@ impl Download {
                     file_name_ref,
                     thread_number
                 );
+                if let Some(range)=range_opt{
+                    if !progress_ref.is_finished(thread_number) {
 
-                if !progress_ref.is_finished(thread_number) {
-                    let mut cache_file_handle = OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .open(&cache_file_name)
-                        .unwrap();
-                    let _ = cache_file_handle.set_len((range_end - range_start + 1) as u64);
-                    if let Some(process) = map_ref.get(&thread_number) {
-                        cache_file_handle
-                            .seek(SeekFrom::Start(process.cached_size as u64))
+                        let mut cache_file_handle = OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .open(&cache_file_name)
                             .unwrap();
+                        let _ = cache_file_handle.set_len((range_end - range_start) as u64);
+                        if let Some(process) = map_ref.get(&thread_number) {
+                            cache_file_handle
+                                .seek(SeekFrom::Start(process.cached_size as u64))
+                                .unwrap();
+                        }
+                        // let mut file_handle = File::create(&cache_file_name).unwrap();
+                        let _ = Self::request(
+                            &mut cache_file_handle,
+                            progress_ref.clone(),
+                            network_ref,
+                            thread_number,
+                            url_ref,
+                            range,
+                        )
+                        .await;
+                        progress_ref.finish(thread_number);
                     }
-                    // let mut file_handle = File::create(&cache_file_name).unwrap();
-                    let _ = Self::request(
-                        &mut cache_file_handle,
-                        progress_ref.clone(),
-                        network_ref,
-                        thread_number,
-                        url_ref,
-                        range,
-                    )
-                    .await;
                 }
-                let mut origin_file_handle = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(origin_file_path_ref)
-                    .unwrap();
-                origin_file_handle
-                    .seek(SeekFrom::Start(range_start as u64))
-                    .unwrap();
-                let mut cache_file_handle = File::open(&cache_file_name).unwrap();
-                let mut writer = BufWriter::new(origin_file_handle);
-                copy_n_byte(
-                    &mut cache_file_handle,
-                    &mut writer,
-                    range_end + 1 - range_start,
-                );
-                let _ = writer.flush();
-                progress_ref.finish(thread_number);
+                return Some((cache_file_name,range_start,range_end))
             }));
         }
 
@@ -314,7 +335,7 @@ impl Download {
         let cache_dir_ref = cache_dir.clone();
         rt.spawn(async move {
             loop {
-                thread::sleep(Duration::from_secs(3));
+                thread::sleep(Duration::from_secs(1));
                 let current = status_checker.dump();
                 let mut all_finished = true;
                 for (_, (_, is_finished)) in &current {
@@ -327,7 +348,7 @@ impl Download {
             }
         });
 
-        progress_arc.clone().join_and_clear();
+        // progress_arc.clone().join_and_clear();
         return children;
     }
 }
