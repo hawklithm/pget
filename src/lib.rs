@@ -2,11 +2,25 @@ use std::path::PathBuf;
 
 mod download;
 
+/// download file paraA file download interface that supports resumable downloads and concurrency.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// let p = PathBuf::from("test");
+/// let p = p.join("test.txt");
+/// pget::download(
+/// "https://hf-mirror.com/Qwen/Qwen1.5-MoE-A2.7B/raw/main/merges.txt".to_string(),
+/// num_cpus::get(),
+/// p.clone(),
+/// );
+/// ```
 pub fn download<P: AsRef<str>>(url: P, thread: usize, output_file: PathBuf) {
     let download = download::Download {
         threads: thread,
         url: url.as_ref().to_owned(),
-        memory: 256,
+        // memory: 256,
         filename: output_file,
         ..Default::default()
     };

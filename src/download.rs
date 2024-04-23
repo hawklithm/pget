@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::fs::{self, read, File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::SeekFrom;
-use std::io::{self, prelude::*, BufWriter};
+use std::io::{prelude::*, BufWriter};
 use std::path::{self, Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -19,14 +19,14 @@ use self::progress::Progress;
 mod network;
 mod progress;
 
-static ONE_KB: u64 = 1024;
+// static ONE_KB: u64 = 1024;
 
 static CACHE_STATUS_FILE: &str = "download_status.json";
 
 pub(crate) struct Download {
     pub url: String,
     pub filename: PathBuf,
-    pub memory: u64,
+    // pub memory: u64,
     pub threads: usize,
     pub network: network::Network,
     pub progress: progress::Progress,
@@ -42,16 +42,16 @@ where
     if len > bf_len {
         let mut buffer = vec![0u8; 1024];
         while count + bf_len <= len {
-            reader.read_exact(&mut buffer);
+            let _ = reader.read_exact(&mut buffer);
             count += bf_len;
-            writer.write(&buffer);
+            let _ = writer.write(&buffer);
         }
     }
     let rest = len % bf_len;
     let mut rest_buf = vec![0u8; rest];
-    reader.read_exact(&mut rest_buf);
-    writer.write(&rest_buf);
-    writer.flush();
+    let _ = reader.read_exact(&mut rest_buf);
+    let _ = writer.write(&rest_buf);
+    let _ = writer.flush();
     count += rest;
     count as u64
 }
@@ -68,7 +68,7 @@ impl Default for Download {
         Download {
             url: "".to_string(),
             filename: PathBuf::from("".to_string()),
-            memory: 256,
+            // memory: 256,
             threads: 4,
             network: network::Network {
                 ..Default::default()

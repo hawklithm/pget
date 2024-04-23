@@ -68,7 +68,7 @@ impl Progress {
         pb.finish_with_message("--done--");
     }
 
-    pub fn join_and_clear(&self) {
-        let _ = self.multi_progress.clear();
-    }
+    // pub fn join_and_clear(&self) {
+    //     let _ = self.multi_progress.clear();
+    // }
 }
