@@ -17,19 +17,23 @@ use crate::common;
 use crate::common::error::DownloadError;
 
 use self::network::Network;
-use self::progress::Progress;
 
 mod network;
+#[cfg(feature = "progress_bar")]
 mod progress;
 
-// static ONE_KB: u64 = 1024;
+#[cfg(not(feature = "progress_bar"))]
+mod mock_progress;
+#[cfg(not(feature = "progress_bar"))]
+use self::mock_progress as progress;
+
+use progress::Progress;
 
 static CACHE_STATUS_FILE: &str = "download_status.json";
 
 pub(crate) struct Download {
     pub url: String,
     pub filename: PathBuf,
-    // pub memory: u64,
     pub threads: usize,
     pub network: network::Network,
     pub progress: progress::Progress,
@@ -71,7 +75,6 @@ impl Default for Download {
         Download {
             url: "".to_string(),
             filename: PathBuf::from("".to_string()),
-            // memory: 256,
             threads: 4,
             network: network::Network::default(),
             progress: progress::Progress::default(),
