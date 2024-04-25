@@ -90,7 +90,7 @@ use indicatif::ProgressBar;
 /// "https://hf-mirror.com/Qwen/Qwen1.5-MoE-A2.7B/raw/main/tokenizer.json".to_string();
 /// let p = PathBuf::from("test");
 /// let p = p.join("qwen.safetensors");
-/// pget::download_with_custom_progress(url, 4, p.clone(), Some(progress),true).unwrap();
+/// pget::download_with_custom_progress(url, 4, p.clone(), Some(progress),false).unwrap();
 /// ```
 ///
 #[cfg(not(feature = "progress_bar"))]
@@ -117,12 +117,11 @@ pub fn download_with_custom_progress<P: AsRef<str>>(
 mod test {
     use std::{fs::File, io::Read, path::PathBuf};
 
-    use indicatif::ProgressBar;
-    use indicatif::ProgressStyle;
     use sha2::Digest;
     use sha2::Sha256;
 
     use crate::download;
+    #[cfg(not(feature = "progress_bar"))]
     use crate::download_with_custom_progress;
 
     fn calc_sha256(file: PathBuf) -> crate::common::error::Result<String> {
@@ -205,9 +204,9 @@ mod test {
     #[test]
     #[cfg(not(feature = "progress_bar"))]
     fn test4() {
-        let progress = ProgressBar::new(0);
+        let progress = indicatif::ProgressBar::new(0);
         progress.set_style(
-                ProgressStyle::with_template(
+                indicatif::ProgressStyle::with_template(
                     "{msg} [{elapsed_precise}] [{wide_bar}] {bytes}/{total_bytes} {bytes_per_sec} ({eta})",
                 )
                     .unwrap(),
