@@ -1,6 +1,6 @@
 [package]
 name = "pget"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Used to solve the network instability issues encountered during large file downloads, supporting resumable downloads and concurrent downloads."
@@ -11,11 +11,9 @@ description = "Used to solve the network instability issues encountered during l
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = "0.12"
-docopt = "1.1.0"
 indicatif = "0.17.0"
 tokio={version="1",features=["full","tracing"]}
 tokio-util={version="0.7",features=["full"]}
-once_cell="1.5"
 futures = {version = "0.3",features = ["thread-pool"]}
 
 [dev-dependencies]
