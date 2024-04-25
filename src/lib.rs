@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+pub mod common;
 mod download;
 
 /// download file paraA file download interface that supports resumable downloads and concurrency.
@@ -25,7 +26,7 @@ pub fn download<P: AsRef<str>>(url: P, thread: usize, output_file: PathBuf) {
         ..Default::default()
     };
 
-    download.get().unwrap();
+    let _ = download.get();
 }
 
 #[cfg(test)]
@@ -37,17 +38,17 @@ mod test {
 
     use crate::download;
 
-    fn calc_sha256(file: PathBuf) -> String {
+    fn calc_sha256(file: PathBuf) -> crate::common::error::Result<String> {
         // 创建一个新的Sha256对象
         let mut hasher = Sha256::new();
 
         // 打开文件进行读取
-        let mut file = File::open(file).unwrap();
+        let mut file = File::open(file)?;
 
         // 一次性读取文件所有内容并更新哈希状态
         let mut buffer = [0; 1024];
         loop {
-            let count = file.read(&mut buffer).unwrap();
+            let count = file.read(&mut buffer)?;
             if count == 0 {
                 break;
             }
@@ -59,7 +60,7 @@ mod test {
 
         // 将哈希结果转换为十六进制字符串
         let hash_hex = hex::encode(result);
-        return hash_hex;
+        return Ok(hash_hex);
     }
 
     #[test]
@@ -74,7 +75,7 @@ mod test {
         );
 
         assert_eq!(
-            calc_sha256(p),
+            calc_sha256(p).unwrap(),
             "656b66a920a54bc45e8e06dc587691ab3c0b2930b9ae56d5fa31e72db2f3bff3"
         );
     }
@@ -90,7 +91,7 @@ mod test {
         );
 
         assert_eq!(
-            calc_sha256(p),
+            calc_sha256(p).unwrap(),
             "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"
         );
     }
@@ -105,7 +106,7 @@ mod test {
             p.clone(),
         );
         assert_eq!(
-            calc_sha256(p),
+            calc_sha256(p).unwrap(),
             "f7c9b2dba4a296b1aa76c16a34b8225c0c118978400d4bb66bff0902d702f5b8"
         );
     }

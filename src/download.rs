@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::SeekFrom;
+use std::io::{self, SeekFrom};
 use std::io::{prelude::*, BufWriter};
 use std::path::{self, Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +12,9 @@ use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
+
+use crate::common;
+use crate::common::error::DownloadError;
 
 use self::network::Network;
 use self::progress::Progress;
@@ -32,7 +35,7 @@ pub(crate) struct Download {
     pub progress: progress::Progress,
 }
 
-fn copy_n_byte<R: ?Sized, W: ?Sized>(reader: &mut R, writer: &mut W, len: usize) -> u64
+fn copy_n_byte<R: ?Sized, W: ?Sized>(reader: &mut R, writer: &mut W, len: usize) -> io::Result<u64>
 where
     R: Read,
     W: Write,
@@ -42,18 +45,18 @@ where
     if len > bf_len {
         let mut buffer = vec![0u8; 1024];
         while count + bf_len <= len {
-            let _ = reader.read_exact(&mut buffer);
+            reader.read_exact(&mut buffer)?;
             count += bf_len;
-            let _ = writer.write(&buffer);
+            writer.write(&buffer)?;
         }
     }
     let rest = len % bf_len;
     let mut rest_buf = vec![0u8; rest];
-    let _ = reader.read_exact(&mut rest_buf);
-    let _ = writer.write(&rest_buf);
-    let _ = writer.flush();
+    reader.read_exact(&mut rest_buf)?;
+    writer.write(&rest_buf)?;
+    writer.flush()?;
     count += rest;
-    count as u64
+    Ok(count as u64)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -93,52 +96,51 @@ fn hash_string_to_hex(input: &str) -> String {
 }
 
 impl Download {
-    pub fn get(self) -> Result<(), reqwest::Error> {
+    pub fn get(self) -> common::error::Result<()> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(self.threads)
             .thread_name("pget")
             .enable_all()
-            .build()
-            .unwrap();
+            .build()?;
         let content_length_resp: Option<u64> =
             rt.block_on(self.network.get_content_length(&self.url))?;
 
         match content_length_resp {
             Some(content_length) => {
                 let target_filename = self.filename.clone();
-                let children = Download::spawn_threads(self, &rt,content_length as usize);
-                let request_result = rt.block_on(join_all(children)).into_iter().filter_map(|x|x.ok()).filter_map(|x|x).collect::<Vec<_>>();
-                Download::assemble(target_filename.clone(), request_result);
+                let children = Download::spawn_threads(self, &rt,content_length as usize)?;
+                let request_result = rt.block_on(join_all(children)).into_iter().filter_map(|x|x.ok()).filter_map(|x|x.ok()).collect::<Vec<_>>();
+                Download::assemble(target_filename.clone(), request_result)?;
                 let target_file_handle = OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open(target_filename)
-                    .unwrap();
-                let _=target_file_handle.set_len(content_length);
+                    .open(target_filename)?;
+                target_file_handle.set_len(content_length)?;
             }
             None => println!("Content length is not present for this URL. Support for this type of hosted file will be added in the future."),
         }
         Ok(())
     }
 
-    fn assemble(file_path: PathBuf, ranges: Vec<(String, usize, usize)>) {
+    fn assemble(
+        file_path: PathBuf,
+        ranges: Vec<(String, usize, usize)>,
+    ) -> common::error::Result<()> {
         let origin_file_path_ref = file_path.clone();
         let origin_file_handle = OpenOptions::new()
             .write(true)
             .create(true)
-            .open(origin_file_path_ref)
-            .unwrap();
+            .open(origin_file_path_ref)?;
         let origin_file_arc = Arc::new(origin_file_handle);
         for (cache_file_name, range_start, range_end) in ranges {
             let mut origin_file_ref = origin_file_arc.clone();
-            origin_file_ref
-                .seek(SeekFrom::Start(range_start as u64))
-                .unwrap();
-            let mut cache_file_handle = File::open(&cache_file_name).unwrap();
+            origin_file_ref.seek(SeekFrom::Start(range_start as u64))?;
+            let mut cache_file_handle = File::open(&cache_file_name)?;
             let mut writer = BufWriter::new(origin_file_ref);
-            copy_n_byte(&mut cache_file_handle, &mut writer, range_end - range_start);
-            let _ = writer.flush();
+            copy_n_byte(&mut cache_file_handle, &mut writer, range_end - range_start)?;
+            writer.flush()?;
         }
+        Ok(())
     }
 
     fn calculate_ranges(
@@ -208,19 +210,22 @@ impl Download {
         thread_number: usize,
         url_ref: String,
         range: String,
-    ) -> Result<(), reqwest::Error> {
+    ) -> common::error::Result<()> {
         let mut file_range_resp = network_ref.make_request(&url_ref, Some(range)).await?;
-
         while let Some(chunk) = file_range_resp.chunk().await? {
             let buffer_size = chunk.len();
-            file_handle.write(&chunk).unwrap();
-            file_handle.flush().unwrap();
+            file_handle.write(&chunk)?;
+            file_handle.flush()?;
             progress_ref.inc(buffer_size, thread_number);
         }
+
         Ok(())
     }
 
-    fn dump_process(current: HashMap<&usize, (u64, bool)>, cached_dir: PathBuf) {
+    fn dump_process(
+        current: HashMap<&usize, (u64, bool)>,
+        cached_dir: PathBuf,
+    ) -> common::error::Result<()> {
         let mut process_status = Vec::new();
         for (key, (value, finished)) in current {
             process_status.push(DownloadProcess {
@@ -229,9 +234,10 @@ impl Download {
                 finished,
             });
         }
-        let json_str = serde_json::to_string_pretty(&process_status).unwrap();
+        let json_str = serde_json::to_string_pretty(&process_status)?;
         let status_file = cached_dir.join(CACHE_STATUS_FILE);
-        fs::write(status_file, json_str).unwrap();
+        fs::write(status_file, json_str)?;
+        Ok(())
     }
 
     fn load_process(threads: usize, cached_dir: PathBuf) -> Vec<DownloadProcess> {
@@ -256,16 +262,18 @@ impl Download {
         self,
         rt: &Runtime,
         content_length: usize,
-    ) -> Vec<JoinHandle<Option<(String, usize, usize)>>> {
+    ) -> common::error::Result<Vec<JoinHandle<common::error::Result<(String, usize, usize)>>>> {
         let mut children = vec![];
 
         let network_arc = Arc::new(self.network);
         let file_path = self.filename;
-        let file_dir = file_path.parent().unwrap();
+        let file_dir = file_path.parent().ok_or(DownloadError::parameter(
+            "target file should have a parent dir",
+        ))?;
         let hash_name = hash_string_to_hex(&self.url);
         let cache_dir = file_dir.join(".cache").join(hash_name);
         if !cache_dir.exists() {
-            fs::create_dir_all(&cache_dir).unwrap();
+            fs::create_dir_all(&cache_dir)?;
         }
 
         let (progress, ranges, map) = Download::calculate_ranges(
@@ -277,9 +285,16 @@ impl Download {
         let progress_arc = Arc::new(progress);
 
         // check file
-        let _target = File::create(file_path.clone()).unwrap();
+        let _target = File::create(file_path.clone())?;
 
-        let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
+        let file_name = file_path
+            .file_name()
+            .ok_or(DownloadError::parameter(
+                "target file should not be a director",
+            ))?
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let map_arc = Arc::new(map);
 
@@ -304,16 +319,12 @@ impl Download {
                         let mut cache_file_handle = OpenOptions::new()
                             .write(true)
                             .create(true)
-                            .open(&cache_file_name)
-                            .unwrap();
+                            .open(&cache_file_name)?;
                         let _ = cache_file_handle.set_len((range_end - range_start) as u64);
                         if let Some(process) = map_ref.get(&thread_number) {
-                            cache_file_handle
-                                .seek(SeekFrom::Start(process.cached_size as u64))
-                                .unwrap();
+                            cache_file_handle.seek(SeekFrom::Start(process.cached_size as u64))?;
                         }
-                        // let mut file_handle = File::create(&cache_file_name).unwrap();
-                        let _ = Self::request(
+                        Self::request(
                             &mut cache_file_handle,
                             progress_ref.clone(),
                             network_ref,
@@ -321,11 +332,11 @@ impl Download {
                             url_ref,
                             range,
                         )
-                        .await;
+                        .await?;
                         progress_ref.finish(thread_number);
                     }
                 }
-                return Some((cache_file_name, range_start, range_end));
+                return Ok((cache_file_name, range_start, range_end));
             }));
         }
 
@@ -342,11 +353,14 @@ impl Download {
                 if all_finished {
                     break;
                 }
-                Self::dump_process(current, cache_dir_ref.clone());
+                match Self::dump_process(current, cache_dir_ref.clone()) {
+                    Ok(_) => (),
+                    Err(e) => println!("dump process failed! error message = {:?}", e),
+                }
             }
         });
 
         // progress_arc.clone().join_and_clear();
-        return children;
+        return Ok(children);
     }
 }
