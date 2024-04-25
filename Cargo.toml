@@ -3,7 +3,14 @@ name = "pget"
 version = "0.1.1"
 edition = "2021"
 license = "MIT"
-description = "Used to solve the network instability issues encountered during large file downloads, supporting resumable downloads and concurrent downloads."
+description = """
+Used to solve the network instability issues encountered during large file downloads, supporting resumable downloads and concurrent downloads.
+"""
+homepage = "https://github.com/hawklithm/pget"
+# documentation = "https://docs.rs/hf-hub"
+repository = "https://github.com/hawklithm/pget"
+readme = "README.md"
+keywords = ["download", "resume", "parallel"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
