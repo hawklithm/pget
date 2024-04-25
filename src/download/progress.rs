@@ -67,8 +67,4 @@ impl Progress {
         };
         pb.finish_with_message(format!("thread #{} --done--", thread_number));
     }
-
-    // pub fn join_and_clear(&self) {
-    //     let _ = self.multi_progress.clear();
-    // }
 }

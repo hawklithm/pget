@@ -15,9 +15,13 @@ mod download;
 /// "https://hf-mirror.com/Qwen/Qwen1.5-MoE-A2.7B/raw/main/merges.txt".to_string(),
 /// num_cpus::get(),
 /// p.clone(),
-/// );
+/// ).unwrap();
 /// ```
-pub fn download<P: AsRef<str>>(url: P, thread: usize, output_file: PathBuf) ->common::error::Result<()>{
+pub fn download<P: AsRef<str>>(
+    url: P,
+    thread: usize,
+    output_file: PathBuf,
+) -> common::error::Result<()> {
     let download = download::Download {
         threads: thread,
         url: url.as_ref().to_owned(),
@@ -72,7 +76,8 @@ mod test {
                 .to_string(),
             8,
             p.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(
             calc_sha256(p).unwrap(),
@@ -88,7 +93,8 @@ mod test {
             "https://hf-mirror.com/Qwen/Qwen1.5-MoE-A2.7B/raw/main/merges.txt".to_string(),
             num_cpus::get(),
             p.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(
             calc_sha256(p).unwrap(),
@@ -104,7 +110,8 @@ mod test {
             "https://hf-mirror.com/Qwen/Qwen1.5-MoE-A2.7B/raw/main/tokenizer.json".to_string(),
             4,
             p.clone(),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(
             calc_sha256(p).unwrap(),
             "f7c9b2dba4a296b1aa76c16a34b8225c0c118978400d4bb66bff0902d702f5b8"

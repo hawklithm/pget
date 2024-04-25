@@ -73,12 +73,8 @@ impl Default for Download {
             filename: PathBuf::from("".to_string()),
             // memory: 256,
             threads: 4,
-            network: network::Network {
-                ..Default::default()
-            },
-            progress: progress::Progress {
-                ..Default::default()
-            },
+            network: network::Network::default(),
+            progress: progress::Progress::default(),
         }
     }
 }
