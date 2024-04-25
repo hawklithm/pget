@@ -23,13 +23,14 @@ mod network;
 mod progress;
 
 #[cfg(not(feature = "progress_bar"))]
-mod mock_progress;
+pub(crate) mod mock_progress;
 #[cfg(not(feature = "progress_bar"))]
 use self::mock_progress as progress;
 
 use progress::Progress;
 
 static CACHE_STATUS_FILE: &str = "download_status.json";
+static CACHE_PREFIX_PATH: &str = ".cache";
 
 pub(crate) struct Download {
     pub url: String,
@@ -37,6 +38,7 @@ pub(crate) struct Download {
     pub threads: usize,
     pub network: network::Network,
     pub progress: progress::Progress,
+    pub keep_cache: bool,
 }
 
 fn copy_n_byte<R: ?Sized, W: ?Sized>(reader: &mut R, writer: &mut W, len: usize) -> io::Result<u64>
@@ -78,6 +80,7 @@ impl Default for Download {
             threads: 4,
             network: network::Network::default(),
             progress: progress::Progress::default(),
+            keep_cache: false,
         }
     }
 }
@@ -106,10 +109,12 @@ impl Download {
 
         match content_length_resp {
             Some(content_length) => {
+                let cache_dir = self.generate_cache_dir()?;
                 let target_filename = self.filename.clone();
+                let keep_cache = self.keep_cache;
                 let children = Download::spawn_threads(self, &rt,content_length as usize)?;
                 let request_result = rt.block_on(join_all(children)).into_iter().filter_map(|x|x.ok()).filter_map(|x|x.ok()).collect::<Vec<_>>();
-                Download::assemble(target_filename.clone(), request_result)?;
+                Download::assemble(cache_dir,target_filename.clone(), request_result, keep_cache)?;
                 let target_file_handle = OpenOptions::new()
                     .write(true)
                     .create(true)
@@ -121,23 +126,39 @@ impl Download {
         Ok(())
     }
 
+    pub(crate) fn generate_cache_dir(&self) -> common::error::Result<PathBuf> {
+        let file_path = self.filename.clone();
+        let file_dir = file_path.parent().ok_or(DownloadError::parameter(
+            "target file should have a parent dir",
+        ))?;
+        let hash_name = hash_string_to_hex(&self.url);
+        let cache_dir = file_dir.join(CACHE_PREFIX_PATH).join(hash_name);
+        if !cache_dir.exists() {
+            fs::create_dir_all(&cache_dir)?;
+        }
+        Ok(cache_dir)
+    }
+
     fn assemble(
+        cache_dir: PathBuf,
         file_path: PathBuf,
         ranges: Vec<(String, usize, usize)>,
+        keep_cache: bool,
     ) -> common::error::Result<()> {
         let origin_file_path_ref = file_path.clone();
-        let origin_file_handle = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(origin_file_path_ref)?;
+        let origin_file_handle = File::create(origin_file_path_ref)?;
         let origin_file_arc = Arc::new(origin_file_handle);
-        for (cache_file_name, range_start, range_end) in ranges {
+        for (cache_file_name, range_start, range_end) in &ranges {
             let mut origin_file_ref = origin_file_arc.clone();
-            origin_file_ref.seek(SeekFrom::Start(range_start as u64))?;
+            origin_file_ref.seek(SeekFrom::Start(*range_start as u64))?;
             let mut cache_file_handle = File::open(&cache_file_name)?;
             let mut writer = BufWriter::new(origin_file_ref);
             copy_n_byte(&mut cache_file_handle, &mut writer, range_end - range_start)?;
             writer.flush()?;
+        }
+        if !keep_cache {
+            //clean cache after all flushed
+            fs::remove_dir_all(cache_dir)?;
         }
         Ok(())
     }
@@ -264,16 +285,8 @@ impl Download {
     ) -> common::error::Result<Vec<JoinHandle<common::error::Result<(String, usize, usize)>>>> {
         let mut children = vec![];
 
+        let cache_dir = self.generate_cache_dir()?;
         let network_arc = Arc::new(self.network);
-        let file_path = self.filename;
-        let file_dir = file_path.parent().ok_or(DownloadError::parameter(
-            "target file should have a parent dir",
-        ))?;
-        let hash_name = hash_string_to_hex(&self.url);
-        let cache_dir = file_dir.join(".cache").join(hash_name);
-        if !cache_dir.exists() {
-            fs::create_dir_all(&cache_dir)?;
-        }
 
         let (progress, ranges, map) = Download::calculate_ranges(
             self.threads,
@@ -283,9 +296,7 @@ impl Download {
         );
         let progress_arc = Arc::new(progress);
 
-        // check file
-        let _target = File::create(file_path.clone())?;
-
+        let file_path = self.filename;
         let file_name = file_path
             .file_name()
             .ok_or(DownloadError::parameter(
